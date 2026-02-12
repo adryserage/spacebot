@@ -1,19 +1,354 @@
-//! Discord messaging adapter.
+//! Discord messaging adapter using serenity.
 
-use crate::error::Result;
+use crate::messaging::traits::{InboundStream, Messaging};
+use crate::{InboundMessage, MessageContent, OutboundResponse, StatusUpdate};
+
+use anyhow::Context as _;
+use async_trait::async_trait;
+use serenity::all::{
+    ChannelId, Context, EditMessage, EventHandler, GatewayIntents, GuildId, Http, Message, Ready,
+    ShardManager, UserId,
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc};
 
 /// Discord adapter state.
-pub struct DiscordAdapter;
+pub struct DiscordAdapter {
+    token: String,
+    guild_filter: Option<Vec<GuildId>>,
+    http: Arc<RwLock<Option<Arc<Http>>>>,
+    bot_user_id: Arc<RwLock<Option<UserId>>>,
+    /// Maps InboundMessage.id to the Discord MessageId being edited during streaming.
+    active_messages: Arc<RwLock<HashMap<String, serenity::all::MessageId>>>,
+    /// Typing handles per message. Typing stops when the handle is dropped.
+    typing_tasks: Arc<RwLock<HashMap<String, serenity::http::Typing>>>,
+    shard_manager: Arc<RwLock<Option<Arc<ShardManager>>>>,
+}
 
 impl DiscordAdapter {
-    /// Create a new Discord adapter.
-    pub fn new() -> Self {
-        Self
+    pub fn new(token: impl Into<String>, guild_filter: Option<Vec<u64>>) -> Self {
+        Self {
+            token: token.into(),
+            guild_filter: guild_filter.map(|ids| ids.into_iter().map(GuildId::new).collect()),
+            http: Arc::new(RwLock::new(None)),
+            bot_user_id: Arc::new(RwLock::new(None)),
+            active_messages: Arc::new(RwLock::new(HashMap::new())),
+            typing_tasks: Arc::new(RwLock::new(HashMap::new())),
+            shard_manager: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    async fn get_http(&self) -> anyhow::Result<Arc<Http>> {
+        self.http
+            .read()
+            .await
+            .clone()
+            .context("discord not connected")
+    }
+
+    fn extract_channel_id(&self, message: &InboundMessage) -> anyhow::Result<ChannelId> {
+        let id = message
+            .metadata
+            .get("discord_channel_id")
+            .and_then(|v| v.as_u64())
+            .context("missing discord_channel_id in metadata")?;
+        Ok(ChannelId::new(id))
+    }
+
+    async fn stop_typing(&self, message_id: &str) {
+        // Typing stops when the handle is dropped
+        self.typing_tasks.write().await.remove(message_id);
     }
 }
 
-impl Default for DiscordAdapter {
-    fn default() -> Self {
-        Self::new()
+impl Messaging for DiscordAdapter {
+    fn name(&self) -> &str {
+        "discord"
     }
+
+    async fn start(&self) -> crate::Result<InboundStream> {
+        let (inbound_tx, inbound_rx) = mpsc::channel(256);
+
+        let handler = Handler {
+            inbound_tx,
+            guild_filter: self.guild_filter.clone(),
+            http_slot: self.http.clone(),
+            bot_user_id_slot: self.bot_user_id.clone(),
+        };
+
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
+            | GatewayIntents::MESSAGE_CONTENT
+            | GatewayIntents::GUILDS;
+
+        let mut client = serenity::Client::builder(&self.token, intents)
+            .event_handler(handler)
+            .await
+            .context("failed to build discord client")?;
+
+        *self.http.write().await = Some(client.http.clone());
+        *self.shard_manager.write().await = Some(client.shard_manager.clone());
+
+        tokio::spawn(async move {
+            if let Err(error) = client.start().await {
+                tracing::error!(%error, "discord gateway error");
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(inbound_rx);
+        Ok(Box::pin(stream))
+    }
+
+    async fn respond(
+        &self,
+        message: &InboundMessage,
+        response: OutboundResponse,
+    ) -> crate::Result<()> {
+        let http = self.get_http().await?;
+        let channel_id = self.extract_channel_id(message)?;
+
+        match response {
+            OutboundResponse::Text(text) => {
+                self.stop_typing(&message.id).await;
+
+                for chunk in split_message(&text, 2000) {
+                    channel_id
+                        .say(&*http, &chunk)
+                        .await
+                        .context("failed to send discord message")?;
+                }
+            }
+            OutboundResponse::StreamStart => {
+                self.stop_typing(&message.id).await;
+
+                let placeholder = channel_id
+                    .say(&*http, "\u{200B}")
+                    .await
+                    .context("failed to send stream placeholder")?;
+
+                self.active_messages
+                    .write()
+                    .await
+                    .insert(message.id.clone(), placeholder.id);
+            }
+            OutboundResponse::StreamChunk(text) => {
+                let active = self.active_messages.read().await;
+                if let Some(&message_id) = active.get(&message.id) {
+                    let display_text = if text.len() > 2000 {
+                        format!("{}...", &text[..1997])
+                    } else {
+                        text
+                    };
+                    let builder = EditMessage::new().content(display_text);
+                    if let Err(error) = channel_id.edit_message(&*http, message_id, builder).await {
+                        tracing::warn!(%error, "failed to edit streaming message");
+                    }
+                }
+            }
+            OutboundResponse::StreamEnd => {
+                self.active_messages.write().await.remove(&message.id);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_status(
+        &self,
+        message: &InboundMessage,
+        status: StatusUpdate,
+    ) -> crate::Result<()> {
+        match status {
+            StatusUpdate::Thinking => {
+                let http = self.get_http().await?;
+                let channel_id = self.extract_channel_id(message)?;
+
+                let typing = channel_id.start_typing(&http);
+                self.typing_tasks
+                    .write()
+                    .await
+                    .insert(message.id.clone(), typing);
+            }
+            _ => {
+                self.stop_typing(&message.id).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn broadcast(
+        &self,
+        target: &str,
+        response: OutboundResponse,
+    ) -> crate::Result<()> {
+        let http = self.get_http().await?;
+
+        let channel_id = ChannelId::new(
+            target
+                .parse::<u64>()
+                .context("invalid discord channel id for broadcast target")?,
+        );
+
+        if let OutboundResponse::Text(text) = response {
+            for chunk in split_message(&text, 2000) {
+                channel_id
+                    .say(&*http, &chunk)
+                    .await
+                    .context("failed to broadcast discord message")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn health_check(&self) -> crate::Result<()> {
+        let http = self.get_http().await?;
+        http.get_current_user()
+            .await
+            .context("discord health check failed")?;
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> crate::Result<()> {
+        self.typing_tasks.write().await.clear();
+
+        if let Some(shard_manager) = self.shard_manager.read().await.as_ref() {
+            shard_manager.shutdown_all().await;
+        }
+
+        tracing::info!("discord adapter shut down");
+        Ok(())
+    }
+}
+
+// -- Serenity EventHandler --
+
+struct Handler {
+    inbound_tx: mpsc::Sender<InboundMessage>,
+    guild_filter: Option<Vec<GuildId>>,
+    http_slot: Arc<RwLock<Option<Arc<Http>>>>,
+    bot_user_id_slot: Arc<RwLock<Option<UserId>>>,
+}
+
+#[async_trait]
+impl EventHandler for Handler {
+    async fn ready(&self, ctx: Context, ready: Ready) {
+        tracing::info!(bot_name = %ready.user.name, "discord connected");
+
+        *self.http_slot.write().await = Some(ctx.http.clone());
+        *self.bot_user_id_slot.write().await = Some(ready.user.id);
+        tracing::info!(guild_count = ready.guilds.len(), "discord guilds available");
+    }
+
+    async fn message(&self, _ctx: Context, message: Message) {
+        if message.author.bot {
+            return;
+        }
+
+        if let Some(filter) = &self.guild_filter {
+            if let Some(guild_id) = message.guild_id {
+                if !filter.contains(&guild_id) {
+                    return;
+                }
+            }
+        }
+
+        let conversation_id = build_conversation_id(&message);
+        let content = extract_content(&message);
+        let metadata = build_metadata(&message);
+
+        let inbound = InboundMessage {
+            id: message.id.to_string(),
+            source: "discord".into(),
+            conversation_id,
+            sender_id: message.author.id.to_string(),
+            agent_id: None,
+            content,
+            timestamp: *message.timestamp,
+            metadata,
+        };
+
+        self.inbound_tx.send(inbound).await.ok();
+    }
+}
+
+// -- Helper functions --
+
+fn build_conversation_id(message: &Message) -> String {
+    match message.guild_id {
+        Some(guild_id) => format!("discord:{}:{}", guild_id, message.channel_id),
+        None => format!("discord:dm:{}", message.author.id),
+    }
+}
+
+fn extract_content(message: &Message) -> MessageContent {
+    if message.attachments.is_empty() {
+        MessageContent::Text(message.content.clone())
+    } else {
+        let attachments = message
+            .attachments
+            .iter()
+            .map(|attachment| crate::Attachment {
+                filename: attachment.filename.clone(),
+                mime_type: attachment.content_type.clone().unwrap_or_default(),
+                url: attachment.url.clone(),
+                size_bytes: Some(attachment.size as u64),
+            })
+            .collect();
+
+        MessageContent::Media {
+            text: if message.content.is_empty() {
+                None
+            } else {
+                Some(message.content.clone())
+            },
+            attachments,
+        }
+    }
+}
+
+fn build_metadata(message: &Message) -> HashMap<String, serde_json::Value> {
+    let mut metadata = HashMap::new();
+    metadata.insert("discord_channel_id".into(), message.channel_id.get().into());
+    metadata.insert("discord_message_id".into(), message.id.get().into());
+    metadata.insert(
+        "discord_author_name".into(),
+        message.author.name.clone().into(),
+    );
+
+    if let Some(guild_id) = message.guild_id {
+        metadata.insert("discord_guild_id".into(), guild_id.get().into());
+    }
+
+    metadata
+}
+
+/// Split a message into chunks that fit within Discord's 2000 char limit.
+/// Tries to split at newlines, then spaces, then hard-cuts.
+fn split_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+
+        let split_at = remaining[..max_len]
+            .rfind('\n')
+            .or_else(|| remaining[..max_len].rfind(' '))
+            .unwrap_or(max_len);
+
+        chunks.push(remaining[..split_at].to_string());
+        remaining = remaining[split_at..].trim_start();
+    }
+
+    chunks
 }

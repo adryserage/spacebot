@@ -135,12 +135,42 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(agent_count = agents.len(), "all agents initialized");
 
+    // Initialize messaging adapters from config
+    let mut messaging_manager = spacebot::messaging::MessagingManager::new();
+
+    if let Some(discord_config) = &config.messaging.discord {
+        if discord_config.enabled {
+            let guild_filter: Option<Vec<u64>> = {
+                let discord_bindings: Vec<u64> = config
+                    .bindings
+                    .iter()
+                    .filter(|b| b.channel == "discord")
+                    .filter_map(|b| b.guild_id.as_ref()?.parse::<u64>().ok())
+                    .collect();
+
+                if discord_bindings.is_empty() {
+                    None
+                } else {
+                    Some(discord_bindings)
+                }
+            };
+
+            let adapter = spacebot::messaging::discord::DiscordAdapter::new(
+                &discord_config.token,
+                guild_filter,
+            );
+            messaging_manager.register(adapter);
+        }
+    }
+
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
 
     tracing::info!("shutdown signal received");
 
     // Graceful shutdown
+    messaging_manager.shutdown().await;
+
     for (agent_id, agent) in agents {
         tracing::info!(%agent_id, "shutting down agent");
         agent.db.close().await;
