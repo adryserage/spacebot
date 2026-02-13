@@ -18,6 +18,7 @@ export default {
 		},
 		fontFamily: {
 			sans: [...defaultTheme.fontFamily.sans],
+			mono: [...defaultTheme.fontFamily.mono],
 			plex: ["IBM Plex Sans", ...defaultTheme.fontFamily.sans],
 		},
 		fontSize: {

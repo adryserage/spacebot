@@ -1,6 +1,6 @@
 //! HTTP server setup: router, static file serving, and API routes.
 
-use super::state::{ApiEvent, ApiState};
+use super::state::{AgentInfo, ApiEvent, ApiState};
 use crate::conversation::channels::ChannelStore;
 use crate::conversation::history::ConversationLogger;
 
@@ -70,6 +70,11 @@ struct MessagesResponse {
     messages: Vec<MessageResponse>,
 }
 
+#[derive(Serialize)]
+struct AgentsResponse {
+    agents: Vec<AgentInfo>,
+}
+
 /// Start the HTTP server on the given address.
 ///
 /// The caller provides a pre-built `ApiState` so agent event streams and
@@ -88,6 +93,7 @@ pub async fn start_http_server(
         .route("/health", get(health))
         .route("/status", get(status))
         .route("/events", get(events_sse))
+        .route("/agents", get(list_agents))
         .route("/channels", get(list_channels))
         .route("/channels/messages", get(channel_messages))
         .route("/channels/status", get(channel_status));
@@ -129,6 +135,12 @@ async fn status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> {
         pid: std::process::id(),
         uptime_seconds: uptime.as_secs(),
     })
+}
+
+/// List all configured agents with their config summaries.
+async fn list_agents(State(state): State<Arc<ApiState>>) -> Json<AgentsResponse> {
+    let agents = state.agent_configs.load();
+    Json(AgentsResponse { agents: agents.as_ref().clone() })
 }
 
 /// SSE endpoint streaming all agent events to connected clients.

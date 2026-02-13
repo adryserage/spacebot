@@ -390,15 +390,24 @@ async fn run(config: spacebot::config::Config, foreground: bool) -> anyhow::Resu
 
     tracing::info!(agent_count = agents.len(), "all agents initialized");
 
-    // Wire agent event streams and DB pools into the API server
+    // Wire agent event streams, DB pools, and config summaries into the API server
     {
         let mut agent_pools = std::collections::HashMap::new();
+        let mut agent_configs = Vec::new();
         for (agent_id, agent) in &agents {
             let event_rx = agent.deps.event_tx.subscribe();
             api_state.register_agent_events(agent_id.to_string(), event_rx);
             agent_pools.insert(agent_id.to_string(), agent.db.sqlite.clone());
+            agent_configs.push(spacebot::api::AgentInfo {
+                id: agent.config.id.clone(),
+                workspace: agent.config.workspace.clone(),
+                context_window: agent.config.context_window,
+                max_turns: agent.config.max_turns,
+                max_concurrent_branches: agent.config.max_concurrent_branches,
+            });
         }
         api_state.set_agent_pools(agent_pools);
+        api_state.set_agent_configs(agent_configs);
     }
 
     // Initialize messaging adapters

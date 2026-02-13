@@ -331,6 +331,41 @@ impl Messaging for SlackAdapter {
                         .context("failed to send slack thread reply")?;
                 }
             }
+            OutboundResponse::File { filename, data, mime_type, caption } => {
+                // Slack's v2 upload flow: get upload URL, upload bytes, complete
+                let upload_url_response = session
+                    .get_upload_url_external(
+                        &SlackApiFilesGetUploadUrlExternalRequest::new(filename.clone(), data.len()),
+                    )
+                    .await
+                    .context("failed to get slack upload URL")?;
+
+                session
+                    .files_upload_via_url(&SlackApiFilesUploadViaUrlRequest::new(
+                        upload_url_response.upload_url,
+                        data,
+                        mime_type,
+                    ))
+                    .await
+                    .context("failed to upload file to slack")?;
+
+                let thread_ts = extract_thread_ts(message);
+                let file_complete = SlackApiFilesComplete::new(upload_url_response.file_id)
+                    .with_title(filename);
+
+                let mut complete_request = SlackApiFilesCompleteUploadExternalRequest::new(
+                    vec![file_complete],
+                )
+                .with_channel_id(channel_id.clone());
+
+                complete_request = complete_request.opt_initial_comment(caption);
+                complete_request = complete_request.opt_thread_ts(thread_ts);
+
+                session
+                    .files_complete_upload_external(&complete_request)
+                    .await
+                    .context("failed to complete slack file upload")?;
+            }
             OutboundResponse::Reaction(emoji) => {
                 let ts = extract_message_ts(message)
                     .context("missing slack_message_ts for reaction")?;

@@ -4,9 +4,20 @@ use crate::agent::status::StatusBlock;
 use crate::{ProcessEvent, ProcessId};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, RwLock};
+
+/// Summary of an agent's configuration, exposed via the API.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub workspace: PathBuf,
+    pub context_window: usize,
+    pub max_turns: usize,
+    pub max_concurrent_branches: usize,
+}
 
 /// State shared across all API handlers.
 pub struct ApiState {
@@ -15,6 +26,8 @@ pub struct ApiState {
     pub event_tx: broadcast::Sender<ApiEvent>,
     /// Per-agent SQLite pools for querying channel/conversation data.
     pub agent_pools: arc_swap::ArcSwap<HashMap<String, sqlx::SqlitePool>>,
+    /// Per-agent config summaries for the agents list endpoint.
+    pub agent_configs: arc_swap::ArcSwap<Vec<AgentInfo>>,
     /// Live status blocks for active channels, keyed by channel_id.
     pub channel_status_blocks: RwLock<HashMap<String, Arc<tokio::sync::RwLock<StatusBlock>>>>,
 }
@@ -102,6 +115,7 @@ impl ApiState {
             started_at: Instant::now(),
             event_tx,
             agent_pools: arc_swap::ArcSwap::from_pointee(HashMap::new()),
+            agent_configs: arc_swap::ArcSwap::from_pointee(Vec::new()),
             channel_status_blocks: RwLock::new(HashMap::new()),
         }
     }
@@ -215,6 +229,11 @@ impl ApiState {
     /// Set the SQLite pools for all agents.
     pub fn set_agent_pools(&self, pools: HashMap<String, sqlx::SqlitePool>) {
         self.agent_pools.store(Arc::new(pools));
+    }
+
+    /// Set the agent config summaries for the agents list endpoint.
+    pub fn set_agent_configs(&self, configs: Vec<AgentInfo>) {
+        self.agent_configs.store(Arc::new(configs));
     }
 }
 

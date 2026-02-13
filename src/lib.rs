@@ -249,12 +249,37 @@ pub enum OutboundResponse {
         thread_name: String,
         text: String,
     },
+    /// Send a file attachment to the user.
+    File {
+        filename: String,
+        #[serde(with = "base64_bytes")]
+        data: Vec<u8>,
+        mime_type: String,
+        caption: Option<String>,
+    },
     /// Add a reaction emoji to the triggering message.
     Reaction(String),
     StreamStart,
     StreamChunk(String),
     StreamEnd,
     Status(StatusUpdate),
+}
+
+/// Serde helper for encoding `Vec<u8>` as base64 in JSON.
+mod base64_bytes {
+    use base64::Engine as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(data))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(&s)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// Status updates for messaging platforms.

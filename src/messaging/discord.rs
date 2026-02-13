@@ -8,8 +8,9 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use serenity::all::{
-    ChannelId, ChannelType, Context, CreateThread, EditMessage, EventHandler, GatewayIntents,
-    GetMessages, Http, Message, MessageId, Ready, ReactionType, ShardManager, UserId,
+    ChannelId, ChannelType, Context, CreateAttachment, CreateMessage, CreateThread, EditMessage,
+    EventHandler, GatewayIntents, GetMessages, Http, Message, MessageId, Ready, ReactionType,
+    ShardManager, UserId,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -176,6 +177,20 @@ impl Messaging for DiscordAdapter {
                         }
                     }
                 }
+            }
+            OutboundResponse::File { filename, data, mime_type: _, caption } => {
+                self.stop_typing(&message.id).await;
+
+                let attachment = CreateAttachment::bytes(data, &filename);
+                let mut builder = CreateMessage::new().add_file(attachment);
+                if let Some(caption_text) = caption {
+                    builder = builder.content(caption_text);
+                }
+
+                channel_id
+                    .send_message(&*http, builder)
+                    .await
+                    .context("failed to send file attachment")?;
             }
             OutboundResponse::Reaction(emoji) => {
                 let message_id = message

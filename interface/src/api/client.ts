@@ -167,8 +167,21 @@ export interface StatusBlockSnapshot {
 /** channel_id -> StatusBlockSnapshot */
 export type ChannelStatusResponse = Record<string, StatusBlockSnapshot>;
 
+export interface AgentInfo {
+	id: string;
+	workspace: string;
+	context_window: number;
+	max_turns: number;
+	max_concurrent_branches: number;
+}
+
+export interface AgentsResponse {
+	agents: AgentInfo[];
+}
+
 export const api = {
 	status: () => fetchJson<StatusResponse>("/status"),
+	agents: () => fetchJson<AgentsResponse>("/agents"),
 	channels: () => fetchJson<ChannelsResponse>("/channels"),
 	channelMessages: (channelId: string, limit = 20) =>
 		fetchJson<MessagesResponse>(

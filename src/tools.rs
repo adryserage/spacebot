@@ -39,6 +39,7 @@ pub mod browser;
 pub mod web_search;
 pub mod channel_recall;
 pub mod cron;
+pub mod send_file;
 
 pub use reply::{ReplyTool, ReplyArgs, ReplyOutput, ReplyError};
 pub use branch_tool::{BranchTool, BranchArgs, BranchOutput, BranchError};
@@ -58,6 +59,7 @@ pub use browser::{BrowserTool, BrowserArgs, BrowserOutput, BrowserError, Browser
 pub use web_search::{WebSearchTool, WebSearchArgs, WebSearchOutput, WebSearchError, SearchResult};
 pub use channel_recall::{ChannelRecallTool, ChannelRecallArgs, ChannelRecallOutput, ChannelRecallError};
 pub use cron::{CronTool, CronArgs, CronOutput, CronError};
+pub use send_file::{SendFileTool, SendFileArgs, SendFileOutput, SendFileError};
 
 use crate::agent::channel::ChannelState;
 use crate::config::BrowserConfig;
@@ -125,6 +127,7 @@ pub async fn add_channel_tools(
     handle.add_tool(RouteTool::new(state.clone())).await?;
     handle.add_tool(CancelTool::new(state)).await?;
     handle.add_tool(SkipTool::new(skip_flag, response_tx.clone())).await?;
+    handle.add_tool(SendFileTool::new(response_tx.clone())).await?;
     handle.add_tool(ReactTool::new(response_tx)).await?;
     if let Some(cron) = cron_tool {
         handle.add_tool(cron).await?;
@@ -145,6 +148,7 @@ pub async fn remove_channel_tools(
     handle.remove_tool(RouteTool::NAME).await?;
     handle.remove_tool(CancelTool::NAME).await?;
     handle.remove_tool(SkipTool::NAME).await?;
+    handle.remove_tool(SendFileTool::NAME).await?;
     handle.remove_tool(ReactTool::NAME).await?;
     // Cron tool removal is best-effort since not all channels have it
     let _ = handle.remove_tool(CronTool::NAME).await;

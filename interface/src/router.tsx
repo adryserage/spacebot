@@ -1,0 +1,229 @@
+import {
+	createRouter,
+	createRootRoute,
+	createRoute,
+	Outlet,
+} from "@tanstack/react-router";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
+import { Sidebar } from "@/components/Sidebar";
+import { Overview } from "@/routes/Overview";
+import { AgentDetail } from "@/routes/AgentDetail";
+import { AgentChannels } from "@/routes/AgentChannels";
+import { ChannelDetail } from "@/routes/ChannelDetail";
+import { useLiveContext } from "@/hooks/useLiveContext";
+import { AgentTabs } from "@/components/AgentTabs";
+
+function RootLayout() {
+	const { liveStates, connectionState } = useLiveContext();
+
+	return (
+		<div className="flex h-screen bg-app">
+			<Sidebar liveStates={liveStates} />
+			<div className="flex flex-1 flex-col overflow-hidden">
+				<ConnectionBanner state={connectionState} />
+				<div className="flex-1 overflow-hidden">
+					<Outlet />
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function AgentHeader({ agentId }: { agentId: string }) {
+	return (
+		<>
+			<header className="flex h-12 items-center border-b border-app-line bg-app-darkBox/50 px-6">
+				<h1 className="font-plex text-sm font-medium text-ink">{agentId}</h1>
+			</header>
+			<AgentTabs agentId={agentId} />
+		</>
+	);
+}
+
+const rootRoute = createRootRoute({
+	component: RootLayout,
+});
+
+const indexRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/",
+	component: function IndexPage() {
+		const { liveStates } = useLiveContext();
+		return <Overview liveStates={liveStates} />;
+	},
+});
+
+const logsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/logs",
+	component: function LogsPage() {
+		return (
+			<div className="flex h-full flex-col">
+				<header className="flex h-12 items-center border-b border-app-line bg-app-darkBox/50 px-6">
+					<h1 className="font-plex text-sm font-medium text-ink">Logs</h1>
+				</header>
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Logs coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId",
+	component: function AgentPage() {
+		const { agentId } = agentRoute.useParams();
+		const { liveStates } = useLiveContext();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex-1 overflow-hidden">
+					<AgentDetail agentId={agentId} liveStates={liveStates} />
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentChannelsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/channels",
+	component: function AgentChannelsPage() {
+		const { agentId } = agentChannelsRoute.useParams();
+		const { liveStates } = useLiveContext();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex-1 overflow-hidden">
+					<AgentChannels agentId={agentId} liveStates={liveStates} />
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentMemoriesRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/memories",
+	component: function AgentMemoriesPage() {
+		const { agentId } = agentMemoriesRoute.useParams();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Memories coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentWorkersRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/workers",
+	component: function AgentWorkersPage() {
+		const { agentId } = agentWorkersRoute.useParams();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Workers coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentCronRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/cron",
+	component: function AgentCronPage() {
+		const { agentId } = agentCronRoute.useParams();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Cron coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentConfigRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/config",
+	component: function AgentConfigPage() {
+		const { agentId } = agentConfigRoute.useParams();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Config coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const agentCortexRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/cortex",
+	component: function AgentCortexPage() {
+		const { agentId } = agentCortexRoute.useParams();
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex flex-1 items-center justify-center">
+					<p className="text-sm text-ink-faint">Cortex coming soon</p>
+				</div>
+			</div>
+		);
+	},
+});
+
+const channelRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/agents/$agentId/channels/$channelId",
+	component: function ChannelPage() {
+		const { agentId, channelId } = channelRoute.useParams();
+		const { liveStates, channels } = useLiveContext();
+		const channel = channels.find((c) => c.id === channelId);
+		return (
+			<div className="flex h-full flex-col">
+				<AgentHeader agentId={agentId} />
+				<div className="flex-1 overflow-hidden">
+					<ChannelDetail
+						agentId={agentId}
+						channelId={channelId}
+						channel={channel}
+						liveState={liveStates[channelId]}
+					/>
+				</div>
+			</div>
+		);
+	},
+});
+
+const routeTree = rootRoute.addChildren([
+	indexRoute,
+	logsRoute,
+	agentRoute,
+	agentChannelsRoute,
+	agentMemoriesRoute,
+	agentWorkersRoute,
+	agentCortexRoute,
+	agentCronRoute,
+	agentConfigRoute,
+	channelRoute,
+]);
+
+export const router = createRouter({ routeTree });
+
+declare module "@tanstack/react-router" {
+	interface Register {
+		router: typeof router;
+	}
+}

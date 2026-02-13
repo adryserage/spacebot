@@ -8,4 +8,4 @@ mod server;
 mod state;
 
 pub use server::start_http_server;
-pub use state::{ApiEvent, ApiState};
+pub use state::{AgentInfo, ApiEvent, ApiState};
