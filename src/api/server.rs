@@ -15,6 +15,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use rust_embed::Embed;
 use serde_json::json;
+use axum::extract::DefaultBodyLimit;
 use tower_http::cors::{Any, CorsLayer};
 
 use std::net::SocketAddr;
@@ -151,7 +152,8 @@ pub async fn start_http_server(
         .layer(middleware::from_fn_with_state(
             state.clone(),
             api_auth_middleware,
-        ));
+        ))
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024));
 
     let app = Router::new()
         .nest("/api", api_routes)
