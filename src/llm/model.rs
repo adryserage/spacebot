@@ -1366,9 +1366,7 @@ fn parse_openai_response(
                 .unwrap_or(serde_json::json!({}));
             // Gemini 2.5+ thinking models return a thought_signature that must
             // be echoed back on subsequent turns, otherwise the API rejects with 400.
-            let signature = tc["thought_signature"]
-                .as_str()
-                .map(|s| s.to_string());
+            let signature = tc["thought_signature"].as_str().map(|s| s.to_string());
             assistant_content.push(AssistantContent::ToolCall(make_tool_call(
                 id, name, arguments, signature,
             )));
