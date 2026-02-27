@@ -782,6 +782,9 @@ pub struct CortexConfig {
     pub association_updates_threshold: f32,
     /// Max associations to create per pass (rate limit).
     pub association_max_per_pass: usize,
+    /// When true, cortex auto-generates the display name. When false,
+    /// the display name equals the agent ID and cortex won't overwrite it.
+    pub auto_display_name: bool,
 }
 
 impl Default for CortexConfig {
@@ -798,6 +801,7 @@ impl Default for CortexConfig {
             association_similarity_threshold: 0.85,
             association_updates_threshold: 0.95,
             association_max_per_pass: 100,
+            auto_display_name: true,
         }
     }
 }
@@ -2045,6 +2049,7 @@ struct TomlCortexConfig {
     association_similarity_threshold: Option<f32>,
     association_updates_threshold: Option<f32>,
     association_max_per_pass: Option<usize>,
+    auto_display_name: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -3644,6 +3649,9 @@ impl Config {
                     association_max_per_pass: c
                         .association_max_per_pass
                         .unwrap_or(base_defaults.cortex.association_max_per_pass),
+                    auto_display_name: c
+                        .auto_display_name
+                        .unwrap_or(base_defaults.cortex.auto_display_name),
                 })
                 .unwrap_or(base_defaults.cortex),
             warmup: toml
@@ -3841,6 +3849,9 @@ impl Config {
                         association_max_per_pass: c
                             .association_max_per_pass
                             .unwrap_or(defaults.cortex.association_max_per_pass),
+                        auto_display_name: c
+                            .auto_display_name
+                            .unwrap_or(defaults.cortex.auto_display_name),
                     }),
                     warmup: a.warmup.map(|w| WarmupConfig {
                         enabled: w.enabled.unwrap_or(defaults.warmup.enabled),
@@ -3883,6 +3894,25 @@ impl Config {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Deduplicate agents by ID — keep the last definition (latest wins).
+        // This prevents crash loops when config.toml has duplicate [[agents]]
+        // entries (e.g. from multiple create_agent API calls).
+        {
+            let mut seen = std::collections::HashSet::new();
+            let before = agents.len();
+            // Reverse-dedup: iterate from the end so the last definition wins,
+            // then reverse back to preserve original order.
+            agents.reverse();
+            agents.retain(|a| seen.insert(a.id.clone()));
+            agents.reverse();
+            if agents.len() < before {
+                tracing::warn!(
+                    duplicates_removed = before - agents.len(),
+                    "removed duplicate agent entries from config"
+                );
+            }
+        }
 
         if agents.is_empty() {
             agents.push(AgentConfig {
