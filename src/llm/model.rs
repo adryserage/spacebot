@@ -832,9 +832,7 @@ impl SpacebotModel {
             })?;
 
         if !status.is_success() {
-            let message = response_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let message = extract_error_message(&response_body, &response_text);
             return Err(CompletionError::ProviderError(format!(
                 "{provider_display_name} API error ({status}): {message}"
             )));
@@ -931,9 +929,7 @@ impl SpacebotModel {
             })?;
 
         if !status.is_success() {
-            let message = response_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let message = extract_error_message(&response_body, &response_text);
             return Err(CompletionError::ProviderError(format!(
                 "{provider_display_name} API error ({status}): {message}"
             )));
@@ -943,6 +939,57 @@ impl SpacebotModel {
     }
 }
 // --- Helpers ---
+
+/// Extract the most useful error message from an API error response.
+///
+/// Different providers return errors in different formats:
+/// - OpenAI/Gemini: `{"error": {"message": "...", "code": ...}}`
+/// - Some providers: `{"error": "string message"}`
+/// - Others: `{"detail": "..."}`  or  `{"message": "..."}`
+///
+/// Falls back to the raw (truncated) response body if no known field is found.
+fn extract_error_message(body: &serde_json::Value, raw_text: &str) -> String {
+    // Standard OpenAI format: {"error": {"message": "..."}}
+    if let Some(msg) = body["error"]["message"].as_str() {
+        return msg.to_string();
+    }
+    // Error as a plain string: {"error": "..."}
+    if let Some(msg) = body["error"].as_str() {
+        return msg.to_string();
+    }
+    // Gemini/Google sometimes uses: {"error": {"status": "INVALID_ARGUMENT", ...}}
+    if let Some(status) = body["error"]["status"].as_str() {
+        let code = body["error"]["code"].as_i64().unwrap_or(0);
+        return format!("{status} (code {code})");
+    }
+    // FastAPI / generic: {"detail": "..."}
+    if let Some(msg) = body["detail"].as_str() {
+        return msg.to_string();
+    }
+    // Top-level message
+    if let Some(msg) = body["message"].as_str() {
+        return msg.to_string();
+    }
+    // Last resort: truncated raw body
+    truncate_body(raw_text).to_string()
+}
+
+#[allow(dead_code)]
+fn normalize_ollama_base_url(configured: Option<String>) -> String {
+    let mut base_url = configured
+        .unwrap_or_else(|| "http://localhost:11434".to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+
+    if base_url.ends_with("/api") {
+        base_url.truncate(base_url.len() - "/api".len());
+    } else if base_url.ends_with("/v1") {
+        base_url.truncate(base_url.len() - "/v1".len());
+    }
+
+    base_url
+}
 
 /// Reverse-map Claude Code canonical tool names back to the original names
 /// from the request's tool definitions.
@@ -1079,14 +1126,20 @@ fn convert_messages_to_openai(messages: &OneOrMany<Message>) -> Vec<serde_json::
                             // OpenAI expects arguments as a JSON string
                             let args_string = serde_json::to_string(&tc.function.arguments)
                                 .unwrap_or_else(|_| "{}".to_string());
-                            tool_calls.push(serde_json::json!({
+                            let mut tool_call_json = serde_json::json!({
                                 "id": tc.id,
                                 "type": "function",
                                 "function": {
                                     "name": tc.function.name,
                                     "arguments": args_string,
                                 }
-                            }));
+                            });
+                            // Gemini 2.5+ thinking models require thought_signature
+                            // to be echoed back in the conversation history.
+                            if let Some(ref sig) = tc.signature {
+                                tool_call_json["thought_signature"] = serde_json::json!(sig);
+                            }
+                            tool_calls.push(tool_call_json);
                         }
                         _ => {}
                     }
@@ -1275,7 +1328,12 @@ fn truncate_body(body: &str) -> &str {
 
 // --- Response parsing ---
 
-fn make_tool_call(id: String, name: String, arguments: serde_json::Value) -> ToolCall {
+fn make_tool_call(
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
+    signature: Option<String>,
+) -> ToolCall {
     ToolCall {
         id,
         call_id: None,
@@ -1283,7 +1341,7 @@ fn make_tool_call(id: String, name: String, arguments: serde_json::Value) -> Too
             name: name.trim().to_string(),
             arguments,
         },
-        signature: None,
+        signature,
         additional_params: None,
     }
 }
@@ -1314,7 +1372,7 @@ fn parse_anthropic_response(
                 let name = block["name"].as_str().unwrap_or("").to_string();
                 let arguments = block["input"].clone();
                 assistant_content.push(AssistantContent::ToolCall(make_tool_call(
-                    id, name, arguments,
+                    id, name, arguments, None,
                 )));
             }
             Some("thinking") => {
@@ -1422,8 +1480,11 @@ fn parse_openai_response(
                 .and_then(|raw| serde_json::from_str(raw).ok())
                 .or_else(|| arguments_field.as_object().map(|_| arguments_field.clone()))
                 .unwrap_or(serde_json::json!({}));
+            // Gemini 2.5+ thinking models return a thought_signature that must
+            // be echoed back on subsequent turns, otherwise the API rejects with 400.
+            let signature = tc["thought_signature"].as_str().map(|s| s.to_string());
             assistant_content.push(AssistantContent::ToolCall(make_tool_call(
-                id, name, arguments,
+                id, name, arguments, signature,
             )));
         }
     }
@@ -1493,7 +1554,7 @@ fn parse_openai_responses_response(
                     .unwrap_or(serde_json::json!({}));
 
                 assistant_content.push(AssistantContent::ToolCall(make_tool_call(
-                    call_id, name, arguments,
+                    call_id, name, arguments, None,
                 )));
             }
             _ => {}

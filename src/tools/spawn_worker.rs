@@ -132,6 +132,13 @@ impl Tool for SpawnWorkerTool {
                 }),
             );
         }
+                    serde_json::json!({
+                        "type": "string",
+                        "description": "Working directory for the worker. Required when worker_type is \"opencode\". The OpenCode agent operates in this directory."
+                    }),
+                );
+>>>>>>> 63e0e72c9581876c2d863e440edb39caeb19ff7c
+        }
 
         ToolDefinition {
             name: Self::NAME.to_string(),

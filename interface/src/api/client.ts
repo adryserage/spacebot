@@ -545,6 +545,7 @@ export interface CortexSection {
 	bulletin_interval_secs: number;
 	bulletin_max_words: number;
 	bulletin_max_turns: number;
+	auto_display_name: boolean;
 }
 
 export interface CoalesceSection {
@@ -627,6 +628,7 @@ export interface CortexUpdate {
 	bulletin_interval_secs?: number;
 	bulletin_max_words?: number;
 	bulletin_max_turns?: number;
+	auto_display_name?: boolean;
 }
 
 export interface CoalesceUpdate {
