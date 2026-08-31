@@ -45,7 +45,7 @@ tracing-appender = "0.2"
 
 # OpenTelemetry
 opentelemetry = "0.29"
-opentelemetry_sdk = { version = "0.29", features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
 opentelemetry-otlp = { version = "0.29", default-features = false, features = ["http-proto", "reqwest-client"] }
 opentelemetry-semantic-conventions = "0.29"
 tracing-opentelemetry = "0.30"
@@ -79,7 +79,7 @@ pin-project = "1"
 
 # Schema validation
 schemars = "0.8"
-rmcp = { version = "0.16", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "1.4", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 
 # Command line (for main.rs)
 clap = { version = "4.5", features = ["derive"] }
